@@ -3,13 +3,13 @@
  * Outlook Smart Alerts add-in (OnMessageSend).
  *
  * When a message is sent, this checks the recipients and — if the message is
- * going to anyone outside the organization OR to more than one recipient —
- * stops the send and shows a short summary the sender must acknowledge.
+ * going to anyone outside the organization — stops the send and shows a short
+ * summary the sender must acknowledge.
  *
  * Nothing here is added to the message, so external recipients never see it.
  *
  * ---------------------------------------------------------------------------
- * CONFIGURATION — edit the three values below to suit your organization.
+ * CONFIGURATION — edit the values below to suit your organization.
  * ---------------------------------------------------------------------------
  */
 
@@ -18,9 +18,12 @@
 // covers sub-domains (e.g. "mail.calgarycounselling.com").
 var INTERNAL_DOMAINS = ["calgarycounselling.com"];
 
-// Prompt when the total number of recipients is at least this many.
-// 2 = prompt whenever there is more than one recipient. Raise it (e.g. 5) if
-// you only want to warn on larger audiences.
+// Set to true to also prompt on messages with many recipients (even if all
+// internal). Set to false to prompt ONLY when there is an external recipient.
+var PROMPT_ON_MULTIPLE_RECIPIENTS = false;
+
+// Only used when PROMPT_ON_MULTIPLE_RECIPIENTS is true: prompt when the total
+// number of recipients is at least this many (2 = more than one recipient).
 var MULTIPLE_RECIPIENT_THRESHOLD = 2;
 
 // How many external addresses to spell out in the dialog before truncating.
@@ -108,46 +111,4 @@ function evaluate(event, buckets) {
     }
   }
 
-  var triggerExternal = external.length >= 1;
-  var triggerMultiple = total >= MULTIPLE_RECIPIENT_THRESHOLD;
-
-  // Neither condition met — let it send with no interruption.
-  if (!triggerExternal && !triggerMultiple) {
-    event.completed({ allowEvent: true });
-    return;
-  }
-
-  var lines = [];
-  lines.push("Please double-check who this email is going to.");
-  lines.push("");
-  lines.push("Recipients: " + total + (bccCount ? " (" + bccCount + " in Bcc)" : ""));
-
-  if (external.length > 0) {
-    var listed = external.slice(0, MAX_LISTED).join(", ");
-    if (external.length > MAX_LISTED) {
-      listed += ", and " + (external.length - MAX_LISTED) + " more";
-    }
-    lines.push("Outside Calgary Counselling (" + external.length + "): " + listed);
-  } else {
-    lines.push("All recipients are internal.");
-  }
-
-  lines.push("");
-  lines.push("If this is correct, choose Send anyway. Otherwise choose Don't send to fix the recipients.");
-
-  var message = lines.join("\n");
-  // Smart Alerts caps the message length; keep it comfortably short.
-  if (message.length > 480) {
-    message = message.substring(0, 477) + "...";
-  }
-
-  event.completed({
-    allowEvent: false,
-    errorMessage: message
-  });
-}
-
-// Register the handler for event-based activation.
-if (typeof Office !== "undefined" && Office.actions && Office.actions.associate) {
-  Office.actions.associate("onMessageSendHandler", onMessageSendHandler);
-}
+  var triggerExternal =
