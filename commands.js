@@ -10,7 +10,14 @@ var INTERNAL_DOMAINS = ["calgarycounselling.com"];
 // false = prompt ONLY when there is an external recipient.
 var PROMPT_ON_MULTIPLE_RECIPIENTS = false;
 var MULTIPLE_RECIPIENT_THRESHOLD = 2;
+
+// How many external addresses to list in the dialog before truncating.
 var MAX_LISTED = 8;
+
+// When true, and a message has more than one recipient with someone in Cc, the
+// dialog also asks whether those Cc recipients should be in Bcc instead (so the
+// recipients can't see each other's email addresses).
+var SUGGEST_BCC_WHEN_CC_USED = true;
 
 // If reading recipients stalls this long (ms), allow the send rather than
 // leaving the sender stuck. Normal reads take a few milliseconds.
@@ -97,15 +104,18 @@ function evaluate(finish, buckets) {
       }
     }
 
+    var ccCount = buckets.cc.length;
     var triggerExternal = external.length >= 1;
     var triggerMultiple = PROMPT_ON_MULTIPLE_RECIPIENTS && total >= MULTIPLE_RECIPIENT_THRESHOLD;
+    var triggerCc = SUGGEST_BCC_WHEN_CC_USED && total > 1 && ccCount >= 1;
 
-    if (!triggerExternal && !triggerMultiple) { finish(true); return; }
+    if (!triggerExternal && !triggerMultiple && !triggerCc) { finish(true); return; }
 
     var lines = [];
     lines.push("Please double-check who this email is going to.");
     lines.push("");
     lines.push("Recipients: " + total + (bccCount ? " (" + bccCount + " in Bcc)" : ""));
+
     if (external.length > 0) {
       var listed = external.slice(0, MAX_LISTED).join(", ");
       if (external.length > MAX_LISTED) listed += ", and " + (external.length - MAX_LISTED) + " more";
@@ -113,11 +123,23 @@ function evaluate(finish, buckets) {
     } else {
       lines.push("All recipients are internal.");
     }
-    lines.push("");
-    lines.push("If this is correct, choose Send anyway. Otherwise choose Don't send to fix the recipients.");
 
-    var message = lines.join("\n");
-    if (message.length > 480) message = message.substring(0, 477) + "...";
+    if (triggerCc) {
+      lines.push("");
+      lines.push(ccCount + (ccCount === 1 ? " recipient is" : " recipients are")
+        + " in Cc. Should they be in Bcc instead, so recipients can't see each other's addresses?");
+    }
+
+    var closing = "If this is correct, choose 'Send anyway'. Otherwise choose 'Don't send' to fix the recipients.";
+    var body = lines.join("\n");
+    var message = body + "\n\n" + closing;
+    if (message.length > 480) {
+      var room = 480 - closing.length - 5;
+      if (room < 0) { room = 0; }
+      body = body.substring(0, room) + "...";
+      message = body + "\n\n" + closing;
+    }
+
     finish(false, message);
   } catch (e) {
     finish(true);
