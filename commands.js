@@ -14,9 +14,9 @@ var MULTIPLE_RECIPIENT_THRESHOLD = 2;
 // How many external addresses to list in the dialog before truncating.
 var MAX_LISTED = 8;
 
-// When true, and a message has more than one recipient with someone in Cc, the
-// dialog also asks whether those Cc recipients should be in Bcc instead (so the
-// recipients can't see each other's email addresses).
+// When true, if there is an EXTERNAL recipient in the Cc field, the dialog also
+// asks whether they should be in Bcc instead (so external people can't see the
+// other recipients' email addresses). Internal-only Cc does not trigger this.
 var SUGGEST_BCC_WHEN_CC_USED = true;
 
 // If reading recipients stalls this long (ms), allow the send rather than
@@ -46,6 +46,18 @@ function isInternal(address) {
     if (domainMatches(domain, INTERNAL_DOMAINS[i].toLowerCase())) return true;
   }
   return false;
+}
+
+// Return the external addresses found in a single recipient list (To/Cc/Bcc).
+function externalIn(list) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var email = list[i] && list[i].emailAddress ? list[i].emailAddress : "";
+    if (!isInternal(email)) {
+      out.push(email || (list[i] && list[i].displayName) || "(unknown address)");
+    }
+  }
+  return out;
 }
 
 function onMessageSendHandler(event) {
@@ -92,22 +104,15 @@ function onMessageSendHandler(event) {
 
 function evaluate(finish, buckets) {
   try {
-    var all = [].concat(buckets.to, buckets.cc, buckets.bcc);
-    var total = all.length;
+    var total = buckets.to.length + buckets.cc.length + buckets.bcc.length;
     var bccCount = buckets.bcc.length;
 
-    var external = [];
-    for (var i = 0; i < all.length; i++) {
-      var email = all[i] && all[i].emailAddress ? all[i].emailAddress : "";
-      if (!isInternal(email)) {
-        external.push(email || (all[i] && all[i].displayName) || "(unknown address)");
-      }
-    }
+    var ccExternal = externalIn(buckets.cc);
+    var external = [].concat(externalIn(buckets.to), ccExternal, externalIn(buckets.bcc));
 
-    var ccCount = buckets.cc.length;
     var triggerExternal = external.length >= 1;
     var triggerMultiple = PROMPT_ON_MULTIPLE_RECIPIENTS && total >= MULTIPLE_RECIPIENT_THRESHOLD;
-    var triggerCc = SUGGEST_BCC_WHEN_CC_USED && total > 1 && ccCount >= 1;
+    var triggerCc = SUGGEST_BCC_WHEN_CC_USED && ccExternal.length >= 1;
 
     if (!triggerExternal && !triggerMultiple && !triggerCc) { finish(true); return; }
 
@@ -126,8 +131,8 @@ function evaluate(finish, buckets) {
 
     if (triggerCc) {
       lines.push("");
-      lines.push(ccCount + (ccCount === 1 ? " recipient is" : " recipients are")
-        + " in Cc. Should they be in Bcc instead, so recipients can't see each other's addresses?");
+      lines.push(ccExternal.length + (ccExternal.length === 1 ? " external recipient is" : " external recipients are")
+        + " in Cc, visible to everyone. Should they be in Bcc instead, so recipients can't see each other's addresses?");
     }
 
     var closing = "If this is correct, choose 'Send anyway'. Otherwise choose 'Don't send' to fix the recipients.";
