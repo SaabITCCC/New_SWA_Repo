@@ -1,7 +1,8 @@
 /*
  * Calgary Counselling Centre — Recipient Check
  * Outlook Smart Alerts add-in (OnMessageSend).
- * Hardened: any error or stall resolves quickly instead of hanging.
+ * Shows To / Cc / Bcc separately, flags external addresses, guarded so it
+ * never hangs. Nothing is added to the message; recipients never see this.
  */
 
 // Domains that count as "internal" (case-insensitive, includes sub-domains).
@@ -11,16 +12,10 @@ var INTERNAL_DOMAINS = ["calgarycounselling.com"];
 var PROMPT_ON_MULTIPLE_RECIPIENTS = false;
 var MULTIPLE_RECIPIENT_THRESHOLD = 2;
 
-// How many external addresses to list in the dialog before truncating.
+// Max addresses to list per field before "and N more".
 var MAX_LISTED = 8;
 
-// When true, if there is an EXTERNAL recipient in the Cc field, the dialog also
-// asks whether they should be in Bcc instead (so external people can't see the
-// other recipients' email addresses). Internal-only Cc does not trigger this.
-var SUGGEST_BCC_WHEN_CC_USED = true;
-
-// If reading recipients stalls this long (ms), allow the send rather than
-// leaving the sender stuck. Normal reads take a few milliseconds.
+// If reading recipients stalls this long (ms), allow the send.
 var SAFETY_TIMEOUT_MS = 4000;
 
 Office.onReady(function () {});
@@ -48,16 +43,28 @@ function isInternal(address) {
   return false;
 }
 
-// Return the external addresses found in a single recipient list (To/Cc/Bcc).
 function externalIn(list) {
   var out = [];
   for (var i = 0; i < list.length; i++) {
     var email = list[i] && list[i].emailAddress ? list[i].emailAddress : "";
-    if (!isInternal(email)) {
-      out.push(email || (list[i] && list[i].displayName) || "(unknown address)");
-    }
+    if (!isInternal(email)) out.push(email);
   }
   return out;
+}
+
+// Format one field ("To"/"Cc"/"Bcc"), tagging external addresses. null if empty.
+function formatField(label, list) {
+  if (!list || !list.length) return null;
+  var parts = [];
+  var n = list.length < MAX_LISTED ? list.length : MAX_LISTED;
+  for (var i = 0; i < n; i++) {
+    var email = list[i] && list[i].emailAddress ? list[i].emailAddress : "";
+    var shown = email || (list[i] && list[i].displayName) || "(unknown address)";
+    parts.push(isInternal(email) ? shown : shown + " (external)");
+  }
+  var s = parts.join(", ");
+  if (list.length > MAX_LISTED) s += ", and " + (list.length - MAX_LISTED) + " more";
+  return label + ": " + s;
 }
 
 function onMessageSendHandler(event) {
@@ -104,38 +111,32 @@ function onMessageSendHandler(event) {
 
 function evaluate(finish, buckets) {
   try {
-    var total = buckets.to.length + buckets.cc.length + buckets.bcc.length;
-    var bccCount = buckets.bcc.length;
+    var to = buckets.to, cc = buckets.cc, bcc = buckets.bcc;
+    var total = to.length + cc.length + bcc.length;
 
-    var ccExternal = externalIn(buckets.cc);
-    var external = [].concat(externalIn(buckets.to), ccExternal, externalIn(buckets.bcc));
-
-    var triggerExternal = external.length >= 1;
+    var externalCount = externalIn(to).length + externalIn(cc).length + externalIn(bcc).length;
+    var triggerExternal = externalCount >= 1;
     var triggerMultiple = PROMPT_ON_MULTIPLE_RECIPIENTS && total >= MULTIPLE_RECIPIENT_THRESHOLD;
-    var triggerCc = SUGGEST_BCC_WHEN_CC_USED && ccExternal.length >= 1;
 
-    if (!triggerExternal && !triggerMultiple && !triggerCc) { finish(true); return; }
+    if (!triggerExternal && !triggerMultiple) { finish(true); return; }
 
     var lines = [];
     lines.push("Please double-check who this email is going to.");
     lines.push("");
-    lines.push("Recipients: " + total + (bccCount ? " (" + bccCount + " in Bcc)" : ""));
 
-    if (external.length > 0) {
-      var listed = external.slice(0, MAX_LISTED).join(", ");
-      if (external.length > MAX_LISTED) listed += ", and " + (external.length - MAX_LISTED) + " more";
-      lines.push("Outside Calgary Counselling (" + external.length + "): " + listed);
-    } else {
-      lines.push("All recipients are internal.");
-    }
+    var toLine = formatField("To", to);
+    var ccLine = formatField("Cc", cc);
+    var bccLine = formatField("Bcc", bcc);
+    if (toLine) lines.push(toLine);
+    if (ccLine) lines.push(ccLine);
+    if (bccLine) lines.push(bccLine);
 
-    if (triggerCc) {
+    if (cc.length > 0 || bcc.length > 0) {
       lines.push("");
-      lines.push(ccExternal.length + (ccExternal.length === 1 ? " external recipient is" : " external recipients are")
-        + " in Cc, visible to everyone. Should they be in Bcc instead, so recipients can't see each other's addresses?");
+      lines.push("Ensure that your Cc and Bcc lists are correct. Cc'd users are visible to all addressees, Bcc'd users are not.");
     }
 
-    var closing = "If this is correct, choose 'Send anyway'. Otherwise choose 'Don't send' to fix the recipients.";
+    var closing = "If your email is addressed correctly, select 'Send anyway'. Otherwise, select 'Don't send' and adjust the recipients.";
     var body = lines.join("\n");
     var message = body + "\n\n" + closing;
     if (message.length > 480) {
